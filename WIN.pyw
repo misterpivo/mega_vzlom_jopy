@@ -3,8 +3,10 @@ import mss
 from PIL import Image, ImageDraw, ImageFont
 from pynput import keyboard
 from google import genai
+from google.genai import errors
 import threading
 import time
+import random
 import pystray
 from pystray import MenuItem
 import pyperclip
@@ -21,7 +23,7 @@ import config
 # ---------------------------
 # SETUP TESSERACT (WINDOWS)
 # ---------------------------
-# Пусть из config.py
+# Шлях із config.py
 if config.TESSERACT_PATH.strip():
     pytesseract.pytesseract.tesseract_cmd = config.TESSERACT_PATH
 
@@ -83,7 +85,7 @@ def is_choice_answer(text: str) -> bool:
     if len(t) == 1 and t.lower() in CHOICE_LETTERS:
         return True
 
-    # варианты в виде [a,b,c]
+    # варіанти у вигляді [a,b,c]
     if t.startswith("[") and t.endswith("]"):
         t = t[1:-1]
 
@@ -176,8 +178,8 @@ def thinking_animation():
 # OCR
 # ---------------------------
 def ocr_screenshot():
-    with mss.mss() as sct:
-        monitor = sct.monitors[1]  # primary screen
+    with mss.MSS() as sct:
+        monitor = sct.monitors[1]  # основний екран
         screenshot = sct.grab(monitor)
 
     img = Image.frombytes("RGB", screenshot.size, screenshot.rgb)
@@ -185,17 +187,50 @@ def ocr_screenshot():
 
 
 # ---------------------------
-# GEMINI REQUEST
+# GEMINI REQUEST (з повторами + запасними моделями)
 # ---------------------------
-def ask_gemini(question):
+def ask_gemini(question, max_retries=4):
     history.append(f"User: {question}")
-    response = client.models.generate_content(
-        model=config.GEMINI_MODEL,
-        contents="\n".join(history)
-    )
-    ans = response.text.strip()
-    history.append(f"Assistant: {ans}")
-    return ans
+
+    # основна модель з config + запасні на випадок 503/перевантаження
+    candidates = [config.GEMINI_MODEL, "gemini-3.5-flash", "gemini-2.5-pro", "gemini-2.5-flash"]
+    models_to_try = []
+    for m in candidates:                 # прибираємо дублікати, зберігаючи порядок
+        if m and m not in models_to_try:
+            models_to_try.append(m)
+
+    last_error = None
+    for model_name in models_to_try:
+        for attempt in range(max_retries):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents="\n".join(history)
+                )
+                ans = response.text.strip()
+                history.append(f"Assistant: {ans}")
+                return ans
+
+            except errors.ServerError as e:
+                # 503/500 — сервер перевантажений, чекаємо і пробуємо ще
+                last_error = e
+                wait = (2 ** attempt) + random.uniform(0, 1)  # 1с → 2с → 4с → 8с + джиттер
+                print(f"⏳ {model_name}: сервер зайнятий ({getattr(e, 'code', '?')}), повтор через {wait:.1f}с...")
+                time.sleep(wait)
+
+            except errors.ClientError as e:
+                # 400/403/404 — ключ/модель/запит, повтори не допоможуть
+                history.pop()
+                msg = f"❌ Помилка запиту: {e}"
+                print(msg)
+                return msg
+
+        print(f"⚠ Модель {model_name} недоступна, пробую наступну...")
+
+    history.pop()
+    msg = f"❌ Усі моделі недоступні. Остання помилка: {last_error}"
+    print(msg)
+    return msg
 
 
 # ---------------------------
