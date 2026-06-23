@@ -10,35 +10,36 @@ from pystray import MenuItem
 import pyperclip
 import os
 
-# === CONFIG ===
+# === КОНФІГ ===
 import config
 
 
 # ----------------------
-#    SYSTEM PROMPT
+#    СИСТЕМНИЙ ПРОМПТ
 # ----------------------
 SYSTEM_PROMPT = """
-1)Якщо тобі надіслали питання з варіантами відповідей (a, b, c, d, e, f):
+1) Якщо тобі надіслали питання з варіантами відповідей (a, b, c, d, e, f):
 Якщо правильна одна — відповідай лише літерою, наприклад: c
 Якщо правильних декілька — відповідай строго у вигляді списку: [a,b,f]
+Якщо треба з'єднати декілька варіантів відповідей — пиши їх послідовно (з чим з'єднувати) у вигляді списку: [b,a,f]
 ЖОДНИХ інших символів, слів, пояснень.
 
-2)Якщо потрібно повернути текст/скрипт/код (SQL, C, Python тощо):
+2) Якщо потрібно повернути текст/скрипт/код (SQL, C, Python тощо):
 Відповідай ЛИШЕ чистим кодом або текстом, БЕЗ коментарів.
 Жодних рядків з коментарями (#, //, /* */ тощо).
-Жодних пояснень словами
+Жодних пояснень словами.
 """
 
 
 # ----------------------
-#     INIT GEMINI
+#     ІНІЦІАЛІЗАЦІЯ GEMINI
 # ----------------------
 client = genai.Client(api_key=config.API_KEY)
 history = [SYSTEM_PROMPT]
 
 
 # ----------------------
-#     GLOBAL STATE
+#     ГЛОБАЛЬНИЙ СТАН
 # ----------------------
 tray_icon = None
 answer_list = []
@@ -51,23 +52,23 @@ hotkeys_enabled = True
 
 
 # ----------------------
-#     LOAD ICON
+#     ЗАВАНТАЖЕННЯ ІКОНКИ
 # ----------------------
 try:
     custom_image = Image.open(config.ICON_PATH).convert("RGBA")
 except:
     custom_image = None
-    print(f"⚠ Иконка '{config.ICON_PATH}' НЕ найдена!")
+    print(f"⚠ Іконку '{config.ICON_PATH}' НЕ знайдено!")
 
 
 CHOICE_LETTERS = set("abcdef")
 
 
 # ----------------------
-#  FUNCTIONS UNCHANGED
+#  ФУНКЦІЇ БЕЗ ЗМІН
 # ----------------------
-# (ВСЯ ТВОЯ ПРОГРАММА НИЖЕ НЕ ТРОГАЕТСЯ,
-#  ТОЛЬКО ПОДСТАВЛЯЕТСЯ CONFIG)
+# (ВСЯ ТВОЯ ПРОГРАМА НИЖЧЕ НЕ ЗМІНЮЄТЬСЯ,
+#  ТІЛЬКИ ПІДСТАВЛЯЄТЬСЯ CONFIG)
 # ----------------------
 
 def is_choice_answer(text: str) -> bool:
@@ -113,10 +114,10 @@ def draw_letter_on_custom_icon(letter):
         font = ImageFont.truetype("/Library/Fonts/Arial Bold.ttf", 150)
     except:
         font = ImageFont.load_default()
-    bbox = draw.textbbox((0,0), letter, font=font)
+    bbox = draw.textbbox((0, 0), letter, font=font)
     w = bbox[2] - bbox[0]
     h = bbox[3] - bbox[1]
-    draw.text(((img.width-w)/2, (img.height-h)/2), letter, fill="white", font=font)
+    draw.text(((img.width - w) / 2, (img.height - h) / 2), letter, fill="white", font=font)
     return img
 
 
@@ -139,27 +140,27 @@ def toggle_icon_mode():
         tray_update_icon("?")
 
 
-# THINKING ANIMATION
+# АНІМАЦІЯ ОЧІКУВАННЯ
 def thinking_animation():
     global is_thinking
     frames = ["·", "··", "···", "··", "·"]
     i = 0
     while is_thinking:
         tray_update_icon(frames[i])
-        i = (i+1) % len(frames)
+        i = (i + 1) % len(frames)
         time.sleep(0.25)
 
 
-# -------- OCR (uses config.OCR_LANG) --------
+# -------- OCR (використовує config.OCR_LANG) --------
 def ocr_screenshot():
-    with mss.mss() as sct:
+    with mss.MSS() as sct:
         monitor = sct.monitors[0]
         screenshot = sct.grab(monitor)
         img = Image.frombytes("RGB", screenshot.size, screenshot.rgb)
         return pytesseract.image_to_string(img, lang=config.OCR_LANG).strip()
 
 
-# -------- AI --------
+# -------- ШТУЧНИЙ ІНТЕЛЕКТ --------
 def ask_gemini(question):
     history.append(f"User: {question}")
     response = client.models.generate_content(
@@ -171,7 +172,7 @@ def ask_gemini(question):
     return answer
 
 
-# HOTKEY ACTIONS (unchanged)
+# ДІЇ ГАРЯЧИХ КЛАВІШ (без змін)
 def process_z_key():
     global answer_list, answer_index, is_thinking, last_text_answer
     text = ocr_screenshot()
@@ -204,10 +205,10 @@ def process_x_key():
 def process_v_key():
     if last_text_answer.strip():
         pyperclip.copy(last_text_answer)
-        print("\n📋 Скопировано:\n", last_text_answer)
+        print("\n📋 Скопійовано:\n", last_text_answer)
 
 
-# HOTKEY LISTENER с CONFIG HOTKEYS
+# СЛУХАЧ ГАРЯЧИХ КЛАВІШ з CONFIG HOTKEYS
 def hotkey_listener():
     global hotkeys_enabled
     def on_press(key):
@@ -233,33 +234,33 @@ def hotkey_listener():
         listener.join()
 
 
-# TRAY MENU
+# МЕНЮ В ТРЕЇ
 def lock_hotkeys(icon, item):
     global hotkeys_enabled, icon_mode
     hotkeys_enabled = not hotkeys_enabled
     if not hotkeys_enabled:
         icon_mode = 1
         tray_update_icon(answer_list[answer_index] if answer_list else "?")
-        print("🔒 Hotkeys OFF")
+        print("🔒 Гарячі клавіші ВИМКНЕНО")
     else:
         icon_mode = 0
         tray_update_icon(answer_list[answer_index] if answer_list else "?")
-        print("🔓 Hotkeys ON")
+        print("🔓 Гарячі клавіші УВІМКНЕНО")
 
 
 def exit_app(icon, item):
-    print("❌ Exit")
+    print("❌ Вихід")
     icon.stop()
     os._exit(0)
 
 
-# MAIN
+# ГОЛОВНА ФУНКЦІЯ
 def main():
     global tray_icon
 
     tray_menu = pystray.Menu(
-        MenuItem("🔒 Lock / Unlock", lock_hotkeys),
-        MenuItem("❌ Exit", exit_app)
+        MenuItem("🔒 Заблокувати / Розблокувати", lock_hotkeys),
+        MenuItem("❌ Вихід", exit_app)
     )
 
     tray_icon = pystray.Icon(
