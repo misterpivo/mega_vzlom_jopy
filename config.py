@@ -1,26 +1,28 @@
 # ----------------------------
-# CONFIGURATION FILE
+# ФАЙЛ КОНФІГУРАЦІЇ (Gemini + Groq)
 # ----------------------------
 
-# API KEY
-API_KEY = "YOY_API_KEY"
+# Ключі обох провайдерів
+GEMINI_API_KEY = "KEY"
+GROQ_API_KEY   = "KEY"
 
-# Gemini model version
-GEMINI_MODEL = "gemini-2.5-pro"
+# Розумна версія моделі кожного провайдера.
+# Між ними програма перемикається за завантаженістю (хто менш "шумний" — той першим).
+BACKENDS = [
+    {"provider": "gemini", "model": "gemini-3.5-flash"},
+    {"provider": "groq",   "model": "llama-3.3-70b-versatile"},
+]
 
-# OCR languages
+# Мови OCR
 OCR_LANG = "eng+ukr+rus"
 
-# Path to custom OCR engine (Tesseract)
-# Windows: "C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
-#стандартный патч, не менять при стандатрой установке
-# macOS: можно оставить "", он будет проигнорирован
+# Шлях до OCR-рушія (Tesseract)
 TESSERACT_PATH = r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
 
-# Path to custom icon
+# Шлях до іконки
 ICON_PATH = "img.png"
 
-# HOTKEYS
+# ГАРЯЧІ КЛАВІШІ
 HOTKEY_OCR = "z"
 HOTKEY_NEXT = "x"
 HOTKEY_MODE = "c"
