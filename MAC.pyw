@@ -17,20 +17,23 @@ import config
 
 
 SYSTEM_PROMPT = """
-1) Якщо тобі надіслали питання з варіантами відповідей (a, b, c, d, e, f):
-Якщо правильна одна — відповідай лише літерою, наприклад: c
-Якщо правильних декілька — відповідай строго у вигляді списку: [a,b,f]
-Якщо треба з'єднати декілька варіантів відповідей — пиши їх послідовно (з чим з'єднувати) у вигляді списку: [b,a,f]
-ЖОДНИХ інших символів, слів, пояснень.
+ТИ — АВТОМАТИЗОВАНА СИСТЕМА ДЛЯ ВИРІШЕННЯ ТЕСТІВ. Твоя єдина мета — видати точну відповідь у строгому машинному форматі. ЗАВЖДИ давай відповідь, навіть якщо не впевнений на 100% (обирай найбільш логічний варіант).
 
-2) Якщо потрібно повернути текст/скрипт/код (SQL, C, Python тощо):
-Відповідай ЛИШЕ чистим кодом або текстом, БЕЗ коментарів.
-Жодних рядків з коментарями (#, //, /* */ тощо).
-Жодних пояснень словами.
+ПРАВИЛА ФОРМАТУВАННЯ ВІДПОВІДІ:
+1) ОДНА правильна відповідь: пиши лише відповідну літеру. Приклад: c
+2) ДЕКІЛЬКА правильних відповідей: пиши строго у вигляді списку. Приклад: [a,b,f]
+3) ВСТАНОВЛЕННЯ ВІДПОВІДНОСТІ (Match / Drag-and-drop), якщо на картинці немає літер:
+   - Уяви, що варіанти/описи ПРАВОРУЧ позначені літерами a, b, c, d, e, f... зверху вниз.
+   - Видай список цих літер у тому порядку, в якому вони підходять до термінів ЛІВОРУЧ (зверху вниз).
+   - Приклад (якщо першому терміну підходить 3-й опис, другому 1-й і т.д.): [c,a,d,b]
+ЖОДНИХ інших символів, слів, пояснень.
 """
 
+# --- ВСТАВКА (повернення коду/тексту) поки ВИМКНЕНА ---
+# 2) Якщо потрібно повернути текст/скрипт/код (SQL, C, Python тощо):
+# Відповідай ЛИШЕ чистим кодом або текстом, БЕЗ коментарів.
 
-# ---- ІНІЦІАЛІЗАЦІЯ ПРОВАЙДЕРІВ ----
+
 REQUEST_TIMEOUT_S = 15
 
 gemini_client = genai.Client(
@@ -39,11 +42,8 @@ gemini_client = genai.Client(
 )
 groq_client = Groq(api_key=config.GROQ_API_KEY, timeout=float(REQUEST_TIMEOUT_S))
 
-# нейтральна історія (user/assistant); системний промпт додається окремо під кожен провайдер
 history = []
 
-
-# ---- ГЛОБАЛЬНИЙ СТАН ----
 tray_icon = None
 answer_list = []
 answer_index = 0
@@ -53,8 +53,8 @@ last_text_answer = ""
 hotkeys_enabled = True
 model_switching = False
 
-# статистика "шумності"/завантаженості кожного бекенда
-backend_stats = {}  # key -> {"score": float, "fails": int}
+backend_stats = {}
+pinned = None  # закріплений бекенд: тримаємось його, поки не дасть помилку
 
 try:
     custom_image = Image.open(config.ICON_PATH).convert("RGBA")
@@ -65,7 +65,6 @@ except:
 CHOICE_LETTERS = set("abcdef")
 
 
-# ---- ОЦІНКА ЗАВАНТАЖЕНОСТІ ----
 def bkey(b):
     return f"{b['provider']}:{b['model']}"
 
@@ -76,7 +75,6 @@ def get_score(b):
 
 def record_success(b, latency):
     st = backend_stats.setdefault(bkey(b), {"score": 0.0, "fails": 0})
-    # EMA латентності — що швидше відповідає, то менш "шумна"
     st["score"] = 0.6 * st["score"] + 0.4 * latency
     st["fails"] = 0
 
@@ -84,15 +82,13 @@ def record_success(b, latency):
 def record_failure(b):
     st = backend_stats.setdefault(bkey(b), {"score": 0.0, "fails": 0})
     st["fails"] += 1
-    st["score"] += 30.0  # штраф: тимчасово опускаємо в кінець черги
+    st["score"] += 30.0
 
 
 def order_by_noise(backends):
-    # найменш завантажена (менший score) — першою
     return sorted(backends, key=get_score)
 
 
-# ---- ДОПОМІЖНІ ----
 def is_choice_answer(text: str) -> bool:
     t = text.strip()
     if len(t) == 1 and t.lower() in CHOICE_LETTERS:
@@ -190,7 +186,6 @@ def ocr_screenshot():
         return pytesseract.image_to_string(img, lang=config.OCR_LANG).strip()
 
 
-# ---- КОНВЕРТАЦІЯ ІСТОРІЇ ПІД КОЖЕН ПРОВАЙДЕР ----
 def groq_messages():
     return [{"role": "system", "content": SYSTEM_PROMPT}] + history
 
@@ -203,7 +198,6 @@ def gemini_contents():
     return "\n".join(lines)
 
 
-# ---- ВИКЛИК БЕКЕНДА З ТАЙМАУТОМ 15с ----
 def call_backend(b):
     if b["provider"] == "gemini":
         resp = gemini_client.models.generate_content(
@@ -251,41 +245,64 @@ def _err_label(e):
     return f"({code})" if code is not None else f"({type(e).__name__})"
 
 
-# ---- ЗАПИТ ДО AI (2 провайдери, вибір за завантаженістю) ----
 def ask_ai(question, fallback_attempts=2):
+    global pinned
     history.append({"role": "user", "content": question})
-
-    backends = list(config.BACKENDS)
     last_error = None
 
-    # РАУНД 1: по 1 спробі, у порядку зростання "шумності"
+    # 1) Є закріплена модель -> ТІЛЬКИ вона, один виклик, без перебору
+    if pinned is not None:
+        label = f"{pinned['provider']}/{pinned['model']}"
+        print(f"▶ використовую {label} (закріплена)")
+        try:
+            t0 = time.time()
+            answer = generate_with_timeout(pinned)
+            record_success(pinned, time.time() - t0)
+            history.append({"role": "assistant", "content": answer})
+            print(f"✅ {label} відповіла за {time.time() - t0:.1f}с")
+            return answer
+        except Exception as e:
+            last_error = e
+            record_failure(pinned)
+            print(f"⚠ {label}: {_err_label(e)} — закріплена модель впала, шукаю нову")
+            show_switch_arrow()
+            pinned = None
+
+    # 2) Пошук нової робочої моделі (по 1 спробі)
+    backends = list(config.BACKENDS)
     for idx, b in enumerate(order_by_noise(backends)):
         if idx > 0:
             show_switch_arrow()
         label = f"{b['provider']}/{b['model']}"
+        print(f"▶ використовую {label}")
         try:
             t0 = time.time()
             answer = generate_with_timeout(b)
             record_success(b, time.time() - t0)
+            pinned = b
             history.append({"role": "assistant", "content": answer})
+            print(f"✅ {label} відповіла за {time.time() - t0:.1f}с — закріплено")
             return answer
         except Exception as e:
             last_error = e
             record_failure(b)
-            print(f"⚠ {label}: {_err_label(e)} — піднімаю 'шумність', пробую наступну")
+            print(f"⚠ {label}: {_err_label(e)} — пробую наступну")
 
-    # РАУНД 2: усі впали -> по {fallback_attempts} спроби, знову за завантаженістю
+    # 3) Усі впали -> запасний режим по {fallback_attempts} спроби
     print(f"⚠ Усі моделі недоступні. Запасний режим: по {fallback_attempts} спроби...")
     for idx, b in enumerate(order_by_noise(backends)):
         if idx > 0:
             show_switch_arrow()
         label = f"{b['provider']}/{b['model']}"
         for attempt in range(fallback_attempts):
+            print(f"▶ використовую {label} (спроба {attempt + 1}/{fallback_attempts})")
             try:
                 t0 = time.time()
                 answer = generate_with_timeout(b)
                 record_success(b, time.time() - t0)
+                pinned = b
                 history.append({"role": "assistant", "content": answer})
+                print(f"✅ {label} відповіла за {time.time() - t0:.1f}с — закріплено")
                 return answer
             except Exception as e:
                 last_error = e
@@ -302,7 +319,7 @@ def ask_ai(question, fallback_attempts=2):
 
 
 def process_z_key():
-    global answer_list, answer_index, is_thinking, last_text_answer
+    global answer_list, answer_index, is_thinking
     text = ocr_screenshot()
     is_thinking = True
     threading.Thread(target=thinking_animation).start()
@@ -313,9 +330,7 @@ def process_z_key():
         answer_list[:] = extract_choices(ai_answer)
         answer_index = 0
         tray_update_icon(answer_list[0])
-        last_text_answer = ""
     else:
-        last_text_answer = ai_answer
         answer_list[:] = ["?"]
         answer_index = 0
         tray_update_icon("?")
@@ -330,9 +345,8 @@ def process_x_key():
 
 
 def process_v_key():
-    if last_text_answer.strip():
-        pyperclip.copy(last_text_answer)
-        print("\n📋 Скопійовано:\n", last_text_answer)
+    # ВСТАВКА ВИМКНЕНА
+    pass
 
 
 def hotkey_listener():
@@ -349,8 +363,8 @@ def hotkey_listener():
                     threading.Thread(target=process_x_key).start()
                 elif c == config.HOTKEY_MODE:
                     threading.Thread(target=toggle_icon_mode).start()
-                elif c == config.HOTKEY_COPY:
-                    threading.Thread(target=process_v_key).start()
+                # elif c == config.HOTKEY_COPY:
+                #     threading.Thread(target=process_v_key).start()
         except:
             pass
     with keyboard.Listener(on_press=on_press) as listener:
