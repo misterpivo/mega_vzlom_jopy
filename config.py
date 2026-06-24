@@ -6,11 +6,23 @@
 GEMINI_API_KEY = "KEY"
 GROQ_API_KEY   = "KEY"
 
-# Розумна версія моделі кожного провайдера.
 # Між ними програма перемикається за завантаженістю (хто менш "шумний" — той першим).
+# Пул моделей. Програма перемикається між ними за завантаженістю ("шумністю"):
+# на старті пробує згори вниз, далі сама пріоритезує ту, що відповідає швидше.
+# Порядок: від найрозумніших до найлегших, провайдери чергуються.
 BACKENDS = [
-    {"provider": "gemini", "model": "gemini-3.5-flash"},
-    {"provider": "groq",   "model": "llama-3.3-70b-versatile"},
+    # --- ТОП: найрозумніші ---
+    {"provider": "gemini", "model": "gemini-3.5-flash"},        # найновіша Gemini
+    {"provider": "groq",   "model": "llama-3.3-70b-versatile"}, # найбільша Groq (70B)
+    {"provider": "groq",   "model": "openai/gpt-oss-120b"},
+    {"provider": "groq",   "model": "qwen/qwen3-32b"},
+    # --- СЕРЕДНІ: швидкі й точні ---
+    {"provider": "gemini", "model": "gemini-2.5-flash"},
+    {"provider": "groq",   "model": "llama-3.1-8b-instant"},
+
+    # --- ЛЕГКІ: запасні, найшвидші ---
+   {"provider": "gemini", "model": "gemini-2.5-flash-lite"},
+   {"provider": "groq",   "model": "gemma2-9b-it"},
 ]
 
 # Мови OCR
